@@ -4,18 +4,22 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: "*"
+  }
+});
 
 app.get("/", (req, res) => {
-  res.send("FIXED CHAT SERVER");
+  res.send("SERVER RUNNING SAFE");
 });
 
 /* =========================
-   STORAGE
+   SAFE STORAGE
 ========================= */
 
 let roomOwners = {};
-let roomRequests = {}; // store full objects now
+let roomRequests = {};
 
 /* =========================
    SOCKET
@@ -25,12 +29,12 @@ io.on("connection", (socket) => {
 
   console.log("CONNECTED:", socket.id);
 
-  /* =========================
-     CREATE ROOM
-  ========================= */
+  /* CREATE ROOM */
+  socket.on("create-room", (data = {}) => {
 
-  socket.on("create-room", (data) => {
     const room = data.room;
+
+    if (!room) return;
 
     roomOwners[room] = socket.id;
 
@@ -43,95 +47,92 @@ io.on("connection", (socket) => {
     console.log("ROOM CREATED:", room);
   });
 
-  /* =========================
-     JOIN REQUEST (FIXED)
-  ========================= */
-
+  /* JOIN REQUEST */
   socket.on("join-request", (room) => {
 
-    const ownerSocket = roomOwners[room];
+    if (!room) return;
 
-    if (!ownerSocket) {
-      socket.emit("request-rejected", {
-        reason: "ROOM_NOT_FOUND"
-      });
+    const owner = roomOwners[room];
+
+    if (!owner) {
+      socket.emit("request-rejected", { reason: "ROOM_NOT_FOUND" });
       return;
     }
 
-    // 🔥 DO NOT SHIFT ANYTHING HERE
-    roomRequests[room].push({
-      userSocket: socket.id,
-      room: room
-    });
+    if (!roomRequests[room]) {
+      roomRequests[room] = [];
+    }
 
-    console.log("REQUEST STORED:", roomRequests);
+    roomRequests[room].push(socket.id);
 
-    io.to(ownerSocket).emit("new-request", {
+    io.to(owner).emit("new-request", {
       room: room,
       userId: socket.id
     });
+
+    console.log("JOIN REQUEST:", room);
   });
 
-  /* =========================
-     ACCEPT REQUEST (FIXED)
-  ========================= */
-
-  socket.on("accept-request", (data) => {
+  /* ACCEPT */
+  socket.on("accept-request", (data = {}) => {
 
     const room = data.room;
+    const userId = data.userId;
 
-    const index = roomRequests[room]
-      .findIndex(r => r.userSocket === data.userId);
+    if (!room || !userId) return;
+
+    if (!roomRequests[room]) return;
+
+    const index = roomRequests[room].indexOf(userId);
 
     if (index === -1) return;
 
-    const userSocket = roomRequests[room][index].userSocket;
-
     roomRequests[room].splice(index, 1);
 
-    const client = io.sockets.sockets.get(userSocket);
+    const client = io.sockets.sockets.get(userId);
 
     if (client) {
       client.join(room);
 
-      client.emit("request-accepted", {
-        room: room
-      });
+      client.emit("request-accepted", { room });
     }
 
-    console.log("ACCEPTED:", userSocket);
+    console.log("ACCEPTED:", userId);
   });
 
-  /* =========================
-     REJECT REQUEST (FIXED)
-  ========================= */
-
-  socket.on("reject-request", (data) => {
+  /* REJECT */
+  socket.on("reject-request", (data = {}) => {
 
     const room = data.room;
+    const userId = data.userId;
 
-    const index = roomRequests[room]
-      .findIndex(r => r.userSocket === data.userId);
+    if (!room || !userId) return;
+
+    if (!roomRequests[room]) return;
+
+    const index = roomRequests[room].indexOf(userId);
 
     if (index === -1) return;
 
-    const userSocket = roomRequests[room][index].userSocket;
-
     roomRequests[room].splice(index, 1);
 
-    io.to(userSocket).emit("request-rejected", {
-      room: room
-    });
+    io.to(userId).emit("request-rejected", { room });
 
-    console.log("REJECTED:", userSocket);
+    console.log("REJECTED:", userId);
   });
 
-  /* =========================
-     MESSAGE
-  ========================= */
+  /* MESSAGE */
+  socket.on("send-message", (data = {}) => {
 
-  socket.on("send-message", (data) => {
+    if (!data.room || !data.message) return;
+
     io.to(data.room).emit("receive-message", data);
   });
 
+});
+
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+  console.log("SERVER RUNNING ON PORT:", PORT);
 });
