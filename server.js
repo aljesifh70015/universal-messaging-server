@@ -7,14 +7,17 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.get("/", (req, res) => {
-  res.send("Universal Messaging Server Running (Message TTL Mode)");
+  res.send("Universal Messaging Server Running (Stable Version)");
 });
 
-// 🔥 ONLY messages stored with expiry
+// 🔥 ROOM OWNERS MAP
+let roomOwners = {};
+
+// 🔥 MESSAGE STORAGE WITH TTL
 let messages = [];
 
 /*
-Message structure:
+MESSAGE STRUCTURE:
 {
   room,
   message,
@@ -24,7 +27,7 @@ Message structure:
 }
 */
 
-// expiry convert
+// 🔥 TTL SETTINGS
 function getTTL(type) {
   switch (type) {
     case "1 Day":
@@ -36,32 +39,53 @@ function getTTL(type) {
     case "1 Month":
       return 30 * 24 * 60 * 60 * 1000;
     default:
-      return 7 * 24 * 60 * 60 * 1000;
+      return 30 * 24 * 60 * 60 * 1000;
   }
 }
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // room join (NO expiry logic here)
+  // 🔥 CREATE ROOM
+  socket.on("create-room", (data) => {
+    const room = data.room;
+
+    socket.join(room);
+
+    // owner mapping
+    roomOwners[room] = socket.id;
+
+    console.log("Room created:", room);
+  });
+
+  // 🔥 JOIN ROOM
   socket.on("join-room", (room) => {
     socket.join(room);
   });
 
+  // 🔥 JOIN REQUEST (FIXED)
   socket.on("join-request", (room) => {
-    io.to(room).emit("new-request", room);
+    const ownerSocketId = roomOwners[room];
+
+    if (ownerSocketId) {
+      io.to(ownerSocketId).emit("new-request", room);
+    } else {
+      console.log("No owner found for room:", room);
+    }
   });
 
+  // 🔥 ACCEPT REQUEST
   socket.on("accept-request", (room) => {
     socket.join(room);
     io.to(socket.id).emit("request-accepted", room);
   });
 
+  // 🔥 REJECT REQUEST
   socket.on("reject-request", (room) => {
     io.to(socket.id).emit("request-rejected", room);
   });
 
-  // 🔥 MESSAGE WITH TTL
+  // 🔥 SEND MESSAGE (WITH TTL)
   socket.on("send-message", (data) => {
     const ttl = getTTL(data.expiry || "1 Month");
 
@@ -79,11 +103,11 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("User disconnected");
+    console.log("User disconnected:", socket.id);
   });
 });
 
-// 🔥 CLEAN OLD MESSAGES ONLY (ROOM NEVER DELETES)
+// 🔥 AUTO DELETE EXPIRED MESSAGES ONLY
 setInterval(() => {
   const now = Date.now();
 
@@ -93,10 +117,10 @@ setInterval(() => {
     return (now - msg.timestamp) < msg.ttl;
   });
 
-  const removed = before - messages.length;
+  const deleted = before - messages.length;
 
-  if (removed > 0) {
-    console.log(`Deleted ${removed} expired messages`);
+  if (deleted > 0) {
+    console.log(`Deleted ${deleted} expired messages`);
   }
 
 }, 30000);
