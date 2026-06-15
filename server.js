@@ -7,144 +7,87 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.get("/", (req, res) => {
-  res.send("Universal Messaging Server - FINAL CLEAN VERSION");
+  res.send("Blue Tick Server Running");
 });
 
-/* =======================
-   STORAGE
-======================= */
-
 let roomOwners = {};
-let requestQueue = {};
-let onlineUsers = {};
 let messages = [];
 
-/* =======================
-   TTL FUNCTION
-======================= */
-
-function getTTL(type) {
-  switch (type) {
-    case "1 Day": return 24 * 60 * 60 * 1000;
-    case "1 Week": return 7 * 24 * 60 * 60 * 1000;
-    case "2 Weeks": return 14 * 24 * 60 * 60 * 1000;
-    case "1 Month": return 30 * 24 * 60 * 60 * 1000;
-    default: return 30 * 24 * 60 * 60 * 1000;
-  }
-}
-
-/* =======================
-   SOCKET
-======================= */
+/* =========================
+   MESSAGE STORAGE WITH STATUS
+========================= */
 
 io.on("connection", (socket) => {
 
   console.log("Connected:", socket.id);
 
-  /* -------- ONLINE -------- */
-  socket.on("user-online", (userId) => {
-    onlineUsers[userId] = socket.id;
-    io.emit("online-users", Object.keys(onlineUsers));
-  });
+  /* =====================
+     ROOM
+  ===================== */
 
-  socket.on("disconnect", () => {
-    for (let u in onlineUsers) {
-      if (onlineUsers[u] === socket.id) {
-        delete onlineUsers[u];
-        break;
-      }
-    }
-    io.emit("online-users", Object.keys(onlineUsers));
-  });
-
-  /* -------- ROOM -------- */
   socket.on("create-room", (data) => {
     const room = data.room;
-
     socket.join(room);
     roomOwners[room] = socket.id;
-
-    if (!requestQueue[room]) requestQueue[room] = [];
-
-    console.log("Room created:", room);
   });
 
-  /* -------- JOIN REQUEST -------- */
   socket.on("join-request", (room) => {
     const owner = roomOwners[room];
     if (!owner) return;
 
-    requestQueue[room].push(socket.id);
-
-    io.to(owner).emit("new-request", {
-      room: room,
-      total: requestQueue[room].length
-    });
+    io.to(owner).emit("new-request", room);
   });
 
-  /* -------- ACCEPT -------- */
   socket.on("accept-request", (room) => {
-    const queue = requestQueue[room];
-    if (!queue || queue.length === 0) return;
-
-    const user = queue.shift();
-
-    io.sockets.sockets.get(user)?.join(room);
-    io.to(user).emit("request-accepted", room);
+    socket.join(room);
+    io.to(socket.id).emit("request-accepted", room);
   });
 
-  /* -------- REJECT -------- */
   socket.on("reject-request", (room) => {
-    const queue = requestQueue[room];
-    if (!queue || queue.length === 0) return;
-
-    const user = queue.shift();
-    io.to(user).emit("request-rejected", room);
+    io.to(socket.id).emit("request-rejected", room);
   });
 
-  /* -------- MESSAGE -------- */
+  /* =====================
+     MESSAGE SEND
+  ===================== */
+
   socket.on("send-message", (data) => {
 
     const msg = {
+      id: Date.now(),
       room: data.room,
       message: data.message,
       senderId: data.senderId,
-      timestamp: Date.now(),
-      ttl: getTTL(data.expiry || "1 Month")
+      status: "sent" // ✔
     };
 
     messages.push(msg);
 
+    // delivered (✔✔)
+    io.to(data.room).emit("message-delivered", msg);
+
     io.to(data.room).emit("receive-message", msg);
   });
 
-  /* -------- TYPING -------- */
-  socket.on("typing", (data) => {
-    socket.to(data.room).emit("user-typing", data.userId);
-  });
+  /* =====================
+     SEEN SYSTEM (BLUE TICK)
+  ===================== */
 
-  socket.on("stop-typing", (data) => {
-    socket.to(data.room).emit("user-stop-typing", data.userId);
+  socket.on("message-seen", (msgId) => {
+
+    messages = messages.map(m => {
+      if (m.id === msgId) {
+        m.status = "seen"; // 🔵🔵
+      }
+      return m;
+    });
+
+    io.emit("message-seen-update", msgId);
   });
 
 });
 
-/* =======================
-   CLEANUP
-======================= */
-
-setInterval(() => {
-  const now = Date.now();
-
-  messages = messages.filter(m => (now - m.timestamp) < m.ttl);
-
-}, 30000);
-
-/* =======================
-   START
-======================= */
-
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log("Server running on", PORT);
 });
