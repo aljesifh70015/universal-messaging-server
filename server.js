@@ -6,24 +6,19 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-/* =========================
-   BASIC SERVER
-========================= */
-
 app.get("/", (req, res) => {
-  res.send("UNIVERSAL CHAT SERVER RUNNING");
+  res.send("FIXED CHAT SERVER");
 });
 
 /* =========================
-   STORAGE (MERGED SYSTEM)
+   STORAGE
 ========================= */
 
-let roomOwners = {};     // room → owner socket
-let roomRequests = {};   // room → queue of users
-let onlineUsers = {};    // userId → socketId
+let roomOwners = {};
+let roomRequests = {}; // store full objects now
 
 /* =========================
-   SOCKET MAIN
+   SOCKET
 ========================= */
 
 io.on("connection", (socket) => {
@@ -31,25 +26,11 @@ io.on("connection", (socket) => {
   console.log("CONNECTED:", socket.id);
 
   /* =========================
-     USER ONLINE
-  ========================= */
-
-  socket.on("user-online", (userId) => {
-    socket.userId = userId;
-    onlineUsers[userId] = socket.id;
-
-    io.emit("online-users", Object.keys(onlineUsers));
-  });
-
-  /* =========================
      CREATE ROOM
   ========================= */
 
   socket.on("create-room", (data) => {
-
     const room = data.room;
-
-    if (!room) return;
 
     roomOwners[room] = socket.id;
 
@@ -63,12 +44,10 @@ io.on("connection", (socket) => {
   });
 
   /* =========================
-     JOIN REQUEST
+     JOIN REQUEST (FIXED)
   ========================= */
 
   socket.on("join-request", (room) => {
-
-    console.log("JOIN REQUEST:", room);
 
     const ownerSocket = roomOwners[room];
 
@@ -79,13 +58,13 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (!roomRequests[room]) {
-      roomRequests[room] = [];
-    }
+    // 🔥 DO NOT SHIFT ANYTHING HERE
+    roomRequests[room].push({
+      userSocket: socket.id,
+      room: room
+    });
 
-    roomRequests[room].push(socket.id);
-
-    console.log("REQUEST QUEUE:", roomRequests);
+    console.log("REQUEST STORED:", roomRequests);
 
     io.to(ownerSocket).emit("new-request", {
       room: room,
@@ -94,18 +73,21 @@ io.on("connection", (socket) => {
   });
 
   /* =========================
-     ACCEPT REQUEST
+     ACCEPT REQUEST (FIXED)
   ========================= */
 
   socket.on("accept-request", (data) => {
 
-    console.log("ACCEPT:", data);
-
     const room = data.room;
 
-    const userSocket = roomRequests[room]?.shift();
+    const index = roomRequests[room]
+      .findIndex(r => r.userSocket === data.userId);
 
-    if (!userSocket) return;
+    if (index === -1) return;
+
+    const userSocket = roomRequests[room][index].userSocket;
+
+    roomRequests[room].splice(index, 1);
 
     const client = io.sockets.sockets.get(userSocket);
 
@@ -116,64 +98,40 @@ io.on("connection", (socket) => {
         room: room
       });
     }
+
+    console.log("ACCEPTED:", userSocket);
   });
 
   /* =========================
-     REJECT REQUEST
+     REJECT REQUEST (FIXED)
   ========================= */
 
   socket.on("reject-request", (data) => {
 
-    console.log("REJECT:", data);
-
     const room = data.room;
 
-    const userSocket = roomRequests[room]?.shift();
+    const index = roomRequests[room]
+      .findIndex(r => r.userSocket === data.userId);
 
-    if (!userSocket) return;
+    if (index === -1) return;
+
+    const userSocket = roomRequests[room][index].userSocket;
+
+    roomRequests[room].splice(index, 1);
 
     io.to(userSocket).emit("request-rejected", {
       room: room
     });
+
+    console.log("REJECTED:", userSocket);
   });
 
   /* =========================
-     MESSAGE SYSTEM
+     MESSAGE
   ========================= */
 
   socket.on("send-message", (data) => {
-
-    if (!data.room || !data.message) return;
-
-    io.to(data.room).emit("receive-message", {
-      id: Date.now(),
-      message: data.message,
-      senderId: data.senderId
-    });
+    io.to(data.room).emit("receive-message", data);
   });
 
-  /* =========================
-     DISCONNECT CLEANUP
-  ========================= */
-
-  socket.on("disconnect", () => {
-
-    if (socket.userId) {
-      delete onlineUsers[socket.userId];
-      io.emit("online-users", Object.keys(onlineUsers));
-    }
-
-    console.log("DISCONNECTED:", socket.id);
-  });
-
-});
-
-/* =========================
-   START SERVER
-========================= */
-
-const PORT = process.env.PORT || 3000;
-
-server.listen(PORT, () => {
-  console.log("SERVER RUNNING ON PORT:", PORT);
 });
