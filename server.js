@@ -5,36 +5,21 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*"
-  }
+  cors: { origin: "*" }
 });
 
 app.get("/", (req, res) => {
-  res.send("SERVER RUNNING SAFE");
+  res.send("SERVER RUNNING");
 });
-
-/* =========================
-   SAFE STORAGE
-========================= */
 
 let roomOwners = {};
 let roomRequests = {};
 
-/* =========================
-   SOCKET
-========================= */
-
 io.on("connection", (socket) => {
 
-  console.log("CONNECTED:", socket.id);
-
-  /* CREATE ROOM */
-  socket.on("create-room", (data = {}) => {
+  socket.on("create-room", (data) => {
 
     const room = data.room;
-
-    if (!room) return;
 
     roomOwners[room] = socket.id;
 
@@ -43,19 +28,16 @@ io.on("connection", (socket) => {
     }
 
     socket.join(room);
-
-    console.log("ROOM CREATED:", room);
   });
 
-  /* JOIN REQUEST */
   socket.on("join-request", (room) => {
 
-    if (!room) return;
+    room = room?.trim();
 
     const owner = roomOwners[room];
 
     if (!owner) {
-      socket.emit("request-rejected", { reason: "ROOM_NOT_FOUND" });
+      socket.emit("request-rejected", { reason: "NO_ROOM" });
       return;
     }
 
@@ -66,28 +48,25 @@ io.on("connection", (socket) => {
     roomRequests[room].push(socket.id);
 
     io.to(owner).emit("new-request", {
-      room: room,
+      room,
       userId: socket.id
     });
-
-    console.log("JOIN REQUEST:", room);
   });
 
-  /* ACCEPT */
-  socket.on("accept-request", (data = {}) => {
+  socket.on("accept-request", (data) => {
 
     const room = data.room;
     const userId = data.userId;
 
-    if (!room || !userId) return;
+    const list = roomRequests[room];
 
-    if (!roomRequests[room]) return;
+    if (!list) return;
 
-    const index = roomRequests[room].indexOf(userId);
+    const index = list.indexOf(userId);
 
     if (index === -1) return;
 
-    roomRequests[room].splice(index, 1);
+    list.splice(index, 1);
 
     const client = io.sockets.sockets.get(userId);
 
@@ -96,43 +75,30 @@ io.on("connection", (socket) => {
 
       client.emit("request-accepted", { room });
     }
-
-    console.log("ACCEPTED:", userId);
   });
 
-  /* REJECT */
-  socket.on("reject-request", (data = {}) => {
+  socket.on("reject-request", (data) => {
 
     const room = data.room;
     const userId = data.userId;
 
-    if (!room || !userId) return;
+    const list = roomRequests[room];
 
-    if (!roomRequests[room]) return;
+    if (!list) return;
 
-    const index = roomRequests[room].indexOf(userId);
+    const index = list.indexOf(userId);
 
     if (index === -1) return;
 
-    roomRequests[room].splice(index, 1);
+    list.splice(index, 1);
 
     io.to(userId).emit("request-rejected", { room });
-
-    console.log("REJECTED:", userId);
   });
 
-  /* MESSAGE */
-  socket.on("send-message", (data = {}) => {
-
-    if (!data.room || !data.message) return;
-
+  socket.on("send-message", (data) => {
     io.to(data.room).emit("receive-message", data);
   });
 
 });
 
-const PORT = process.env.PORT || 3000;
-
-server.listen(PORT, () => {
-  console.log("SERVER RUNNING ON PORT:", PORT);
-});
+server.listen(process.env.PORT || 3000);
