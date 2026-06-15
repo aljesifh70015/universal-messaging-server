@@ -10,12 +10,28 @@ app.get("/", (req, res) => {
   res.send("Universal Messaging Server Running");
 });
 
+let pendingRequests = {};
+
 io.on("connection", (socket) => {
   console.log("User connected");
 
+  socket.on("join-request", (room) => {
+    pendingRequests[room] = socket.id;
+    io.to(room).emit("new-request", room);
+  });
+
+  socket.on("accept-request", (room) => {
+    const requester = pendingRequests[room];
+
+    if (requester) {
+      io.sockets.sockets.get(requester)?.join(room);
+      io.to(requester).emit("request-accepted", room);
+      delete pendingRequests[room];
+    }
+  });
+
   socket.on("join-room", (room) => {
     socket.join(room);
-    console.log("Joined room:", room);
   });
 
   socket.on("send-message", (data) => {
