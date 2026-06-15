@@ -1,104 +1,151 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const { MongoClient } = require("mongodb");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*" }
+cors: { origin: "*" }
 });
 
+/* =========================
+MONGODB
+========================= */
+
+const uri = "YOUR_MONGODB_CONNECTION_STRING";
+const client = new MongoClient(uri);
+
+let db;
+let usersCollection;
+let messagesCollection;
+
+async function connectDB() {
+try {
+await client.connect();
+db = client.db("universal_chat");
+
+usersCollection = db.collection("users");
+messagesCollection = db.collection("messages");
+
+console.log("MongoDB Connected ✅");
+
+} catch (err) {
+console.log("MongoDB Error:", err);
+}
+}
+
+connectDB();
+
+/* =========================
+EXPRESS
+========================= */
+
 app.get("/", (req, res) => {
-  res.send("SERVER RUNNING");
+res.send("SERVER RUNNING");
 });
 
 let roomOwners = {};
 let roomRequests = {};
 
+/* =========================
+SOCKET
+========================= */
+
 io.on("connection", (socket) => {
 
-  socket.on("create-room", (data) => {
+socket.on("create-room", (data) => {
+const room = data.room;
 
-    const room = data.room;
+roomOwners[room] = socket.id;
 
-    roomOwners[room] = socket.id;
+if (!roomRequests[room]) {
+  roomRequests[room] = [];
+}
 
-    if (!roomRequests[room]) {
-      roomRequests[room] = [];
-    }
-
-    socket.join(room);
-  });
-
-  socket.on("join-request", (room) => {
-
-    room = room?.trim();
-
-    const owner = roomOwners[room];
-
-    if (!owner) {
-      socket.emit("request-rejected", { reason: "NO_ROOM" });
-      return;
-    }
-
-    if (!roomRequests[room]) {
-      roomRequests[room] = [];
-    }
-
-    roomRequests[room].push(socket.id);
-
-    io.to(owner).emit("new-request", {
-      room,
-      userId: socket.id
-    });
-  });
-
-  socket.on("accept-request", (data) => {
-
-    const room = data.room;
-    const userId = data.userId;
-
-    const list = roomRequests[room];
-
-    if (!list) return;
-
-    const index = list.indexOf(userId);
-
-    if (index === -1) return;
-
-    list.splice(index, 1);
-
-    const client = io.sockets.sockets.get(userId);
-
-    if (client) {
-      client.join(room);
-
-      client.emit("request-accepted", { room });
-    }
-  });
-
-  socket.on("reject-request", (data) => {
-
-    const room = data.room;
-    const userId = data.userId;
-
-    const list = roomRequests[room];
-
-    if (!list) return;
-
-    const index = list.indexOf(userId);
-
-    if (index === -1) return;
-
-    list.splice(index, 1);
-
-    io.to(userId).emit("request-rejected", { room });
-  });
-
-  socket.on("send-message", (data) => {
-    io.to(data.room).emit("receive-message", data);
-  });
+socket.join(room);
 
 });
 
-server.listen(process.env.PORT || 3000);
+socket.on("join-request", (room) => {
+room = room?.trim();
+
+const owner = roomOwners[room];
+
+if (!owner) {
+  socket.emit("request-rejected", { reason: "NO_ROOM" });
+  return;
+}
+
+if (!roomRequests[room]) {
+  roomRequests[room] = [];
+}
+
+roomRequests[room].push(socket.id);
+
+io.to(owner).emit("new-request", {
+  room,
+  userId: socket.id
+});
+
+});
+
+socket.on("accept-request", (data) => {
+const room = data.room;
+const userId = data.userId;
+
+const list = roomRequests[room];
+if (!list) return;
+
+const index = list.indexOf(userId);
+if (index === -1) return;
+
+list.splice(index, 1);
+
+const clientSocket = io.sockets.sockets.get(userId);
+
+if (clientSocket) {
+  clientSocket.join(room);
+  clientSocket.emit("request-accepted", { room });
+}
+
+});
+
+socket.on("reject-request", (data) => {
+const room = data.room;
+const userId = data.userId;
+
+const list = roomRequests[room];
+if (!list) return;
+
+const index = list.indexOf(userId);
+if (index === -1) return;
+
+list.splice(index, 1);
+
+io.to(userId).emit("request-rejected", { room });
+
+});
+
+socket.on("send-message", async (data) => {
+io.to(data.room).emit("receive-message", data);
+
+try {
+  if (messagesCollection) {
+    await messagesCollection.insertOne({
+      room: data.room,
+      message: data.message,
+      senderId: data.senderId,
+      createdAt: new Date()
+    });
+  }
+} catch (err) {
+  console.log("Message Save Error:", err);
+}
+
+});
+});
+
+server.listen(process.env.PORT || 3000, () => {
+console.log("Server running...");
+});
