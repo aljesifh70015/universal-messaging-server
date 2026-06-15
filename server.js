@@ -7,31 +7,16 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.get("/", (req, res) => {
-  res.send("Universal Messenger Server - FINAL LEVEL 3");
+  res.send("ENHANCED UNIVERSAL SERVER RUNNING");
 });
 
 /* =========================
-   STORAGE
+   STORAGE SYSTEM
 ========================= */
 
 let roomOwners = {};
-let requestQueue = {};
+let roomRequests = {};
 let onlineUsers = {};
-let messages = [];
-
-/* =========================
-   TTL (AUTO DELETE)
-========================= */
-
-function getTTL(type) {
-  switch (type) {
-    case "1 Day": return 24 * 60 * 60 * 1000;
-    case "1 Week": return 7 * 24 * 60 * 60 * 1000;
-    case "2 Weeks": return 14 * 24 * 60 * 60 * 1000;
-    case "1 Month": return 30 * 24 * 60 * 60 * 1000;
-    default: return 30 * 24 * 60 * 60 * 1000;
-  }
-}
 
 /* =========================
    SOCKET CONNECTION
@@ -39,144 +24,150 @@ function getTTL(type) {
 
 io.on("connection", (socket) => {
 
-  console.log("Connected:", socket.id);
+  console.log("CONNECTED:", socket.id);
 
   /* =========================
-     ONLINE SYSTEM
+     ONLINE TRACKING (FIXED)
   ========================= */
 
   socket.on("user-online", (userId) => {
+    socket.userId = userId;
     onlineUsers[userId] = socket.id;
-    io.emit("online-users", Object.keys(onlineUsers));
-  });
 
-  socket.on("disconnect", () => {
-    for (let u in onlineUsers) {
-      if (onlineUsers[u] === socket.id) {
-        delete onlineUsers[u];
-        break;
-      }
-    }
     io.emit("online-users", Object.keys(onlineUsers));
   });
 
   /* =========================
-     ROOM SYSTEM
+     DISCONNECT CLEANUP (IMPORTANT FIX)
+  ========================= */
+
+  socket.on("disconnect", () => {
+    if (socket.userId) {
+      delete onlineUsers[socket.userId];
+      io.emit("online-users", Object.keys(onlineUsers));
+    }
+  });
+
+  /* =========================
+     CREATE ROOM (SAFE)
   ========================= */
 
   socket.on("create-room", (data) => {
     const room = data.room;
 
-    socket.join(room);
+    if (!room) return;
+
     roomOwners[room] = socket.id;
 
-    if (!requestQueue[room]) {
-      requestQueue[room] = [];
+    if (!roomRequests[room]) {
+      roomRequests[room] = [];
     }
 
-    console.log("Room created:", room);
-  });
+    socket.join(room);
 
-  socket.on("join-request", (room) => {
-    const owner = roomOwners[room];
-    if (!owner) return;
-
-    if (!requestQueue[room]) requestQueue[room] = [];
-
-    requestQueue[room].push(socket.id);
-
-    io.to(owner).emit("new-request", room);
-  });
-
-  socket.on("accept-request", (room) => {
-    const queue = requestQueue[room];
-    if (!queue || queue.length === 0) return;
-
-    const user = queue.shift();
-
-    io.sockets.sockets.get(user)?.join(room);
-
-    io.to(user).emit("request-accepted", room);
-  });
-
-  socket.on("reject-request", (room) => {
-    const queue = requestQueue[room];
-    if (!queue || queue.length === 0) return;
-
-    const user = queue.shift();
-
-    io.to(user).emit("request-rejected", room);
+    console.log("ROOM CREATED:", room);
   });
 
   /* =========================
-     MESSAGE SYSTEM + BLUE TICK
+     JOIN REQUEST (SAFE + LOGGED)
+  ========================= */
+
+  socket.on("join-request", (room) => {
+
+    const ownerSocket = roomOwners[room];
+
+    if (!ownerSocket) {
+      socket.emit("request-rejected", { reason: "ROOM_NOT_FOUND" });
+      return;
+    }
+
+    if (!roomRequests[room]) roomRequests[room] = [];
+
+    roomRequests[room].push(socket.id);
+
+    io.to(ownerSocket).emit("new-request", {
+      room: room,
+      userId: socket.id
+    });
+  });
+
+  /* =========================
+     ACCEPT REQUEST (FIXED QUEUE)
+  ========================= */
+
+  socket.on("accept-request", (data) => {
+
+    const room = data.room;
+
+    const userSocket = roomRequests[room]?.shift();
+
+    if (!userSocket) return;
+
+    const clientSocket = io.sockets.sockets.get(userSocket);
+
+    if (clientSocket) {
+      clientSocket.join(room);
+
+      clientSocket.emit("request-accepted", {
+        room: room,
+        status: "accepted"
+      });
+    }
+  });
+
+  /* =========================
+     REJECT REQUEST
+  ========================= */
+
+  socket.on("reject-request", (data) => {
+
+    const room = data.room;
+
+    const userSocket = roomRequests[room]?.shift();
+
+    if (!userSocket) return;
+
+    io.to(userSocket).emit("request-rejected", {
+      room: room,
+      status: "rejected"
+    });
+  });
+
+  /* =========================
+     MESSAGE SYSTEM (IMPROVED)
   ========================= */
 
   socket.on("send-message", (data) => {
 
-    const msg = {
+    if (!data.room || !data.message) return;
+
+    const messagePacket = {
       id: Date.now(),
       room: data.room,
       message: data.message,
       senderId: data.senderId,
-      status: "sent",
-      timestamp: Date.now(),
-      ttl: getTTL(data.expiry || "1 Month")
+      timestamp: new Date().toISOString()
     };
 
-    messages.push(msg);
-
-    // DELIVERED (✔✔)
-    io.to(data.room).emit("receive-message", msg);
+    io.to(data.room).emit("receive-message", messagePacket);
   });
 
   /* =========================
-     SEEN SYSTEM (BLUE TICK)
+     ERROR HANDLER (NEW)
   ========================= */
 
-  socket.on("message-seen", (msgId) => {
-
-    messages = messages.map(m => {
-      if (m.id === msgId) {
-        m.status = "seen"; // 🔵🔵
-      }
-      return m;
-    });
-
-    io.emit("message-seen-update", msgId);
-  });
-
-  /* =========================
-     TYPING SYSTEM
-  ========================= */
-
-  socket.on("typing", (data) => {
-    socket.to(data.room).emit("user-typing", data.userId);
-  });
-
-  socket.on("stop-typing", (data) => {
-    socket.to(data.room).emit("user-stop-typing", data.userId);
+  socket.on("error", (err) => {
+    console.log("Socket Error:", err);
   });
 
 });
 
 /* =========================
-   AUTO CLEAN MESSAGES
-========================= */
-
-setInterval(() => {
-  const now = Date.now();
-
-  messages = messages.filter(m => (now - m.timestamp) < m.ttl);
-
-}, 30000);
-
-/* =========================
-   START SERVER
+   SERVER START
 ========================= */
 
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log("SERVER RUNNING ON PORT:", PORT);
 });
