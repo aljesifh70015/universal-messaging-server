@@ -10,50 +10,59 @@ app.get("/", (req, res) => {
   res.send("Universal Messaging Server Running");
 });
 
-let pendingRequests = {};
+// Store messages with timestamp
+let messages = [];
+
+// Helper: check expiry
+function isExpired(timestamp, expiryMs) {
+  return Date.now() - timestamp > expiryMs;
+}
+
+// cleanup job (runs every 10 sec)
+setInterval(() => {
+  const now = Date.now();
+
+  // default expiry = 1 month (you can change per message later)
+  const ONE_MONTH = 30 * 24 * 60 * 60 * 1000;
+
+  messages = messages.filter(msg => {
+    return !isExpired(msg.timestamp, ONE_MONTH);
+  });
+
+}, 10000);
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // Join room directly (owner or accepted user)
   socket.on("join-room", (room) => {
     socket.join(room);
-    console.log(`Joined room: ${room}`);
   });
 
-  // Send join request
   socket.on("join-request", (room) => {
-    pendingRequests[room] = socket.id;
-
-    // send request to room (owner side)
     io.to(room).emit("new-request", room);
   });
 
-  // Accept request
   socket.on("accept-request", (room) => {
-    const requester = pendingRequests[room];
-
-    if (requester) {
-      io.sockets.sockets.get(requester)?.join(room);
-      io.to(requester).emit("request-accepted", room);
-
-      delete pendingRequests[room];
-    }
+    socket.join(room);
+    io.to(socket.id).emit("request-accepted", room);
   });
 
-  // ❌ Reject request
   socket.on("reject-request", (room) => {
-    const requester = pendingRequests[room];
-
-    if (requester) {
-      io.to(requester).emit("request-rejected", room);
-      delete pendingRequests[room];
-    }
+    io.to(socket.id).emit("request-rejected", room);
   });
 
-  // Message send
+  // 💥 MESSAGE WITH TIMESTAMP
   socket.on("send-message", (data) => {
-    io.to(data.room).emit("receive-message", data);
+    const msgObj = {
+      room: data.room,
+      message: data.message,
+      senderId: data.senderId,
+      timestamp: Date.now()
+    };
+
+    messages.push(msgObj);
+
+    io.to(data.room).emit("receive-message", msgObj);
   });
 
   socket.on("disconnect", () => {
