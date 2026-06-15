@@ -7,70 +7,80 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.get("/", (req, res) => {
-  res.send("Universal Messaging Server Running (FIXED VERSION)");
+  res.send("Universal Messaging Server (QUEUE SYSTEM)");
 });
 
-// 🔥 ROOM OWNER STORE
+// 🔥 ROOM OWNERS
 let roomOwners = {};
 
-// 🔥 REQUEST TRACKING (IMPORTANT FIX)
-let pendingRequests = {}; 
-// format: { room: requesterSocketId }
+// 🔥 REQUEST QUEUE (IMPORTANT UPGRADE)
+let requestQueue = {}; 
+// format:
+// {
+//   roomName: [socketId1, socketId2]
+// }
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // 🔥 CREATE ROOM
+  // CREATE ROOM
   socket.on("create-room", (data) => {
     const room = data.room;
 
     socket.join(room);
     roomOwners[room] = socket.id;
 
+    requestQueue[room] = [];
+
     console.log("Room created:", room);
   });
 
-  // 🔥 JOIN REQUEST
+  // JOIN REQUEST (QUEUE ADD)
   socket.on("join-request", (room) => {
-    const ownerSocketId = roomOwners[room];
+    const owner = roomOwners[room];
 
-    if (ownerSocketId) {
-      pendingRequests[room] = socket.id;
+    if (!owner) return;
 
-      io.to(ownerSocketId).emit("new-request", room);
+    if (!requestQueue[room]) {
+      requestQueue[room] = [];
     }
+
+    requestQueue[room].push(socket.id);
+
+    io.to(owner).emit("new-request", {
+      room: room,
+      queueSize: requestQueue[room].length
+    });
   });
 
-  // 🔥 ACCEPT REQUEST (FIXED LOGIC)
+  // ACCEPT REQUEST (FIRST IN QUEUE)
   socket.on("accept-request", (room) => {
-    const requesterSocketId = pendingRequests[room];
+    const queue = requestQueue[room];
 
-    if (requesterSocketId) {
-      // requester room join
-      io.sockets.sockets.get(requesterSocketId)?.join(room);
+    if (queue && queue.length > 0) {
+      const requester = queue.shift();
 
-      // notify REQUESTER (not owner)
-      io.to(requesterSocketId).emit("request-accepted", room);
+      io.sockets.sockets.get(requester)?.join(room);
+      io.to(requester).emit("request-accepted", room);
 
-      delete pendingRequests[room];
-
-      console.log("Request accepted for room:", room);
-    } else {
-      console.log("No pending request found for:", room);
+      console.log("Accepted:", requester);
     }
   });
 
-  // 🔥 REJECT REQUEST (FIXED)
+  // REJECT REQUEST (FIRST IN QUEUE)
   socket.on("reject-request", (room) => {
-    const requesterSocketId = pendingRequests[room];
+    const queue = requestQueue[room];
 
-    if (requesterSocketId) {
-      io.to(requesterSocketId).emit("request-rejected", room);
-      delete pendingRequests[room];
+    if (queue && queue.length > 0) {
+      const requester = queue.shift();
+
+      io.to(requester).emit("request-rejected", room);
+
+      console.log("Rejected:", requester);
     }
   });
 
-  // 🔥 MESSAGE
+  // MESSAGE
   socket.on("send-message", (data) => {
     io.to(data.room).emit("receive-message", data);
   });
