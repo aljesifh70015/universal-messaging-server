@@ -7,18 +7,19 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.get("/", (req, res) => {
-  res.send("Universal Messaging Server - CLEAN RESET VERSION");
+  res.send("Universal Messaging Server - LEVEL 2 BASE");
 });
 
 /*
 ========================
-CORE STORAGE
+STORAGE
 ========================
 */
 
-let roomOwners = {};        // room -> socketId
-let requestQueue = {};      // room -> [socketIds]
-let messages = [];         // chat messages
+let roomOwners = {};
+let requestQueue = {};
+let messages = [];
+let onlineUsers = {};
 
 /*
 ========================
@@ -38,12 +39,35 @@ function getTTL(type) {
 
 /*
 ========================
-SOCKET SYSTEM
+SOCKET LOGIC
 ========================
 */
 
 io.on("connection", (socket) => {
+
   console.log("Connected:", socket.id);
+
+  // =====================
+  // USER ONLINE SYSTEM
+  // =====================
+  socket.on("user-online", (userId) => {
+    onlineUsers[userId] = socket.id;
+
+    io.emit("online-users", Object.keys(onlineUsers));
+  });
+
+  socket.on("disconnect", () => {
+    for (let user in onlineUsers) {
+      if (onlineUsers[user] === socket.id) {
+        delete onlineUsers[user];
+        break;
+      }
+    }
+
+    io.emit("online-users", Object.keys(onlineUsers));
+
+    console.log("Disconnected:", socket.id);
+  });
 
   // =====================
   // CREATE ROOM
@@ -52,6 +76,7 @@ io.on("connection", (socket) => {
     const room = data.room;
 
     socket.join(room);
+
     roomOwners[room] = socket.id;
 
     if (!requestQueue[room]) {
@@ -94,7 +119,7 @@ io.on("connection", (socket) => {
 
       io.to(user).emit("request-accepted", room);
 
-      console.log("Accepted user:", user);
+      console.log("Accepted:", user);
     }
   });
 
@@ -128,9 +153,6 @@ io.on("connection", (socket) => {
     io.to(data.room).emit("receive-message", msg);
   });
 
-  socket.on("disconnect", () => {
-    console.log("Disconnected:", socket.id);
-  });
 });
 
 /*
@@ -148,7 +170,14 @@ setInterval(() => {
 
 }, 30000);
 
+/*
+========================
+START SERVER
+========================
+*/
+
 const PORT = process.env.PORT || 3000;
+
 server.listen(PORT, () => {
   console.log("Server running on port", PORT);
 });
