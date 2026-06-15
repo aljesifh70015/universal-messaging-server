@@ -13,7 +13,8 @@ cors: { origin: "*" }
 MONGODB
 ========================= */
 
-const uri = "YOUR_MONGODB_CONNECTION_STRING";
+const uri = "mongodb+srv://aljesif:<db_password>@cluster0.t7kihvt.mongodb.net/?appName=Cluster0";
+
 const client = new MongoClient(uri);
 
 let db;
@@ -23,8 +24,8 @@ let messagesCollection;
 async function connectDB() {
 try {
 await client.connect();
-db = client.db("universal_chat");
 
+db = client.db("universal_chat");
 usersCollection = db.collection("users");
 messagesCollection = db.collection("messages");
 
@@ -131,14 +132,12 @@ socket.on("send-message", async (data) => {
 io.to(data.room).emit("receive-message", data);
 
 try {
-  if (messagesCollection) {
-    await messagesCollection.insertOne({
-      room: data.room,
-      message: data.message,
-      senderId: data.senderId,
-      createdAt: new Date()
-    });
-  }
+  await messagesCollection.insertOne({
+    room: data.room,
+    message: data.message,
+    senderId: data.senderId,
+    createdAt: new Date()
+  });
 } catch (err) {
   console.log("Message Save Error:", err);
 }
