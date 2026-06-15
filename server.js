@@ -7,25 +7,21 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.get("/", (req, res) => {
-  res.send("Universal Messaging Server - LEVEL 2 BASE");
+  res.send("Universal Messaging Server - FINAL CLEAN VERSION");
 });
 
-/*
-========================
-STORAGE
-========================
-*/
+/* =======================
+   STORAGE
+======================= */
 
 let roomOwners = {};
 let requestQueue = {};
-let messages = [];
 let onlineUsers = {};
+let messages = [];
 
-/*
-========================
-TTL SYSTEM
-========================
-*/
+/* =======================
+   TTL FUNCTION
+======================= */
 
 function getTTL(type) {
   switch (type) {
@@ -37,66 +33,46 @@ function getTTL(type) {
   }
 }
 
-/*
-========================
-SOCKET LOGIC
-========================
-*/
+/* =======================
+   SOCKET
+======================= */
 
 io.on("connection", (socket) => {
 
   console.log("Connected:", socket.id);
 
-  // =====================
-  // USER ONLINE SYSTEM
-  // =====================
+  /* -------- ONLINE -------- */
   socket.on("user-online", (userId) => {
     onlineUsers[userId] = socket.id;
-
     io.emit("online-users", Object.keys(onlineUsers));
   });
 
   socket.on("disconnect", () => {
-    for (let user in onlineUsers) {
-      if (onlineUsers[user] === socket.id) {
-        delete onlineUsers[user];
+    for (let u in onlineUsers) {
+      if (onlineUsers[u] === socket.id) {
+        delete onlineUsers[u];
         break;
       }
     }
-
     io.emit("online-users", Object.keys(onlineUsers));
-
-    console.log("Disconnected:", socket.id);
   });
 
-  // =====================
-  // CREATE ROOM
-  // =====================
+  /* -------- ROOM -------- */
   socket.on("create-room", (data) => {
     const room = data.room;
 
     socket.join(room);
-
     roomOwners[room] = socket.id;
 
-    if (!requestQueue[room]) {
-      requestQueue[room] = [];
-    }
+    if (!requestQueue[room]) requestQueue[room] = [];
 
     console.log("Room created:", room);
   });
 
-  // =====================
-  // JOIN REQUEST
-  // =====================
+  /* -------- JOIN REQUEST -------- */
   socket.on("join-request", (room) => {
     const owner = roomOwners[room];
-
     if (!owner) return;
-
-    if (!requestQueue[room]) {
-      requestQueue[room] = [];
-    }
 
     requestQueue[room].push(socket.id);
 
@@ -106,40 +82,29 @@ io.on("connection", (socket) => {
     });
   });
 
-  // =====================
-  // ACCEPT REQUEST
-  // =====================
+  /* -------- ACCEPT -------- */
   socket.on("accept-request", (room) => {
     const queue = requestQueue[room];
+    if (!queue || queue.length === 0) return;
 
-    if (queue && queue.length > 0) {
-      const user = queue.shift();
+    const user = queue.shift();
 
-      io.sockets.sockets.get(user)?.join(room);
-
-      io.to(user).emit("request-accepted", room);
-
-      console.log("Accepted:", user);
-    }
+    io.sockets.sockets.get(user)?.join(room);
+    io.to(user).emit("request-accepted", room);
   });
 
-  // =====================
-  // REJECT REQUEST
-  // =====================
+  /* -------- REJECT -------- */
   socket.on("reject-request", (room) => {
     const queue = requestQueue[room];
+    if (!queue || queue.length === 0) return;
 
-    if (queue && queue.length > 0) {
-      const user = queue.shift();
-
-      io.to(user).emit("request-rejected", room);
-    }
+    const user = queue.shift();
+    io.to(user).emit("request-rejected", room);
   });
 
-  // =====================
-  // SEND MESSAGE
-  // =====================
+  /* -------- MESSAGE -------- */
   socket.on("send-message", (data) => {
+
     const msg = {
       room: data.room,
       message: data.message,
@@ -153,31 +118,33 @@ io.on("connection", (socket) => {
     io.to(data.room).emit("receive-message", msg);
   });
 
+  /* -------- TYPING -------- */
+  socket.on("typing", (data) => {
+    socket.to(data.room).emit("user-typing", data.userId);
+  });
+
+  socket.on("stop-typing", (data) => {
+    socket.to(data.room).emit("user-stop-typing", data.userId);
+  });
+
 });
 
-/*
-========================
-AUTO CLEAN MESSAGES
-========================
-*/
+/* =======================
+   CLEANUP
+======================= */
 
 setInterval(() => {
   const now = Date.now();
 
-  messages = messages.filter(m => {
-    return (now - m.timestamp) < m.ttl;
-  });
+  messages = messages.filter(m => (now - m.timestamp) < m.ttl);
 
 }, 30000);
 
-/*
-========================
-START SERVER
-========================
-*/
+/* =======================
+   START
+======================= */
 
 const PORT = process.env.PORT || 3000;
-
 server.listen(PORT, () => {
   console.log("Server running on port", PORT);
 });
