@@ -6,20 +6,24 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+/* =========================
+   BASIC SERVER
+========================= */
+
 app.get("/", (req, res) => {
-  res.send("ENHANCED UNIVERSAL SERVER RUNNING");
+  res.send("UNIVERSAL CHAT SERVER RUNNING");
 });
 
 /* =========================
-   STORAGE SYSTEM
+   STORAGE (MERGED SYSTEM)
 ========================= */
 
-let roomOwners = {};
-let roomRequests = {};
-let onlineUsers = {};
+let roomOwners = {};     // room → owner socket
+let roomRequests = {};   // room → queue of users
+let onlineUsers = {};    // userId → socketId
 
 /* =========================
-   SOCKET CONNECTION
+   SOCKET MAIN
 ========================= */
 
 io.on("connection", (socket) => {
@@ -27,7 +31,7 @@ io.on("connection", (socket) => {
   console.log("CONNECTED:", socket.id);
 
   /* =========================
-     ONLINE TRACKING (FIXED)
+     USER ONLINE
   ========================= */
 
   socket.on("user-online", (userId) => {
@@ -38,21 +42,11 @@ io.on("connection", (socket) => {
   });
 
   /* =========================
-     DISCONNECT CLEANUP (IMPORTANT FIX)
-  ========================= */
-
-  socket.on("disconnect", () => {
-    if (socket.userId) {
-      delete onlineUsers[socket.userId];
-      io.emit("online-users", Object.keys(onlineUsers));
-    }
-  });
-
-  /* =========================
-     CREATE ROOM (SAFE)
+     CREATE ROOM
   ========================= */
 
   socket.on("create-room", (data) => {
+
     const room = data.room;
 
     if (!room) return;
@@ -69,21 +63,29 @@ io.on("connection", (socket) => {
   });
 
   /* =========================
-     JOIN REQUEST (SAFE + LOGGED)
+     JOIN REQUEST
   ========================= */
 
   socket.on("join-request", (room) => {
 
+    console.log("JOIN REQUEST:", room);
+
     const ownerSocket = roomOwners[room];
 
     if (!ownerSocket) {
-      socket.emit("request-rejected", { reason: "ROOM_NOT_FOUND" });
+      socket.emit("request-rejected", {
+        reason: "ROOM_NOT_FOUND"
+      });
       return;
     }
 
-    if (!roomRequests[room]) roomRequests[room] = [];
+    if (!roomRequests[room]) {
+      roomRequests[room] = [];
+    }
 
     roomRequests[room].push(socket.id);
+
+    console.log("REQUEST QUEUE:", roomRequests);
 
     io.to(ownerSocket).emit("new-request", {
       room: room,
@@ -92,10 +94,12 @@ io.on("connection", (socket) => {
   });
 
   /* =========================
-     ACCEPT REQUEST (FIXED QUEUE)
+     ACCEPT REQUEST
   ========================= */
 
   socket.on("accept-request", (data) => {
+
+    console.log("ACCEPT:", data);
 
     const room = data.room;
 
@@ -103,14 +107,13 @@ io.on("connection", (socket) => {
 
     if (!userSocket) return;
 
-    const clientSocket = io.sockets.sockets.get(userSocket);
+    const client = io.sockets.sockets.get(userSocket);
 
-    if (clientSocket) {
-      clientSocket.join(room);
+    if (client) {
+      client.join(room);
 
-      clientSocket.emit("request-accepted", {
-        room: room,
-        status: "accepted"
+      client.emit("request-accepted", {
+        room: room
       });
     }
   });
@@ -121,6 +124,8 @@ io.on("connection", (socket) => {
 
   socket.on("reject-request", (data) => {
 
+    console.log("REJECT:", data);
+
     const room = data.room;
 
     const userSocket = roomRequests[room]?.shift();
@@ -128,42 +133,43 @@ io.on("connection", (socket) => {
     if (!userSocket) return;
 
     io.to(userSocket).emit("request-rejected", {
-      room: room,
-      status: "rejected"
+      room: room
     });
   });
 
   /* =========================
-     MESSAGE SYSTEM (IMPROVED)
+     MESSAGE SYSTEM
   ========================= */
 
   socket.on("send-message", (data) => {
 
     if (!data.room || !data.message) return;
 
-    const messagePacket = {
+    io.to(data.room).emit("receive-message", {
       id: Date.now(),
-      room: data.room,
       message: data.message,
-      senderId: data.senderId,
-      timestamp: new Date().toISOString()
-    };
-
-    io.to(data.room).emit("receive-message", messagePacket);
+      senderId: data.senderId
+    });
   });
 
   /* =========================
-     ERROR HANDLER (NEW)
+     DISCONNECT CLEANUP
   ========================= */
 
-  socket.on("error", (err) => {
-    console.log("Socket Error:", err);
+  socket.on("disconnect", () => {
+
+    if (socket.userId) {
+      delete onlineUsers[socket.userId];
+      io.emit("online-users", Object.keys(onlineUsers));
+    }
+
+    console.log("DISCONNECTED:", socket.id);
   });
 
 });
 
 /* =========================
-   SERVER START
+   START SERVER
 ========================= */
 
 const PORT = process.env.PORT || 3000;
