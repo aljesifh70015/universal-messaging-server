@@ -16,7 +16,7 @@ app.get("/", (req, res) => {
 /* =========================
    MONGODB CONNECTION
 ========================= */
-mongoose.connect("mongodb+srv://YOUR_USER:YOUR_PASS@cluster0.mongodb.net/chatapp");
+mongoose.connect("mongodb+srv://aljesif:<db_password>@cluster0.t7kihvt.mongodb.net/?appName=Cluster0");
 
 /* =========================
    USER MODEL
