@@ -4,23 +4,13 @@ const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
 app.get("/", (req, res) => {
   res.send("SERVER RUNNING");
 });
 
-/* =========================
-   USERS ONLINE STATUS
-========================= */
-
 let onlineUsers = {};
-
-/* =========================
-   SOCKET CONNECTION
-========================= */
 
 io.on("connection", (socket) => {
 
@@ -34,10 +24,9 @@ io.on("connection", (socket) => {
     });
   });
 
-  // USER START CHAT
+  // START CHAT (WhatsApp style)
   socket.on("start-chat", ({ from, to }) => {
     const roomId = [from, to].sort().join("_");
-
     socket.join(roomId);
 
     socket.emit("chat-ready", { roomId });
@@ -46,7 +35,7 @@ io.on("connection", (socket) => {
   // SEND MESSAGE
   socket.on("send-message", (data) => {
 
-    const messageData = {
+    const msg = {
       messageId: Date.now().toString(),
       roomId: data.roomId,
       message: data.message,
@@ -55,16 +44,15 @@ io.on("connection", (socket) => {
       status: "sent"
     };
 
-    io.to(data.roomId).emit("receive-message", messageData);
+    io.to(data.roomId).emit("receive-message", msg);
 
-    // delivered instantly
     io.to(data.roomId).emit("message-status", {
-      messageId: messageData.messageId,
+      messageId: msg.messageId,
       status: "delivered"
     });
   });
 
-  // SEEN MESSAGE
+  // SEEN
   socket.on("message-seen", (data) => {
     io.to(data.roomId).emit("message-status", {
       messageId: data.messageId,
@@ -72,33 +60,29 @@ io.on("connection", (socket) => {
     });
   });
 
-  // TYPING START
+  // TYPING
   socket.on("typing", (data) => {
-    socket.to(data.roomId).emit("typing", {
-      userId: data.userId
-    });
+    socket.to(data.roomId).emit("typing", data);
   });
 
-  // TYPING STOP
   socket.on("stop-typing", (data) => {
     socket.to(data.roomId).emit("stop-typing");
   });
 
-  // DISCONNECT
+  // OFFLINE
   socket.on("disconnect", () => {
-
-    for (let userId in onlineUsers) {
-      if (onlineUsers[userId] === socket.id) {
-        delete onlineUsers[userId];
+    for (let id in onlineUsers) {
+      if (onlineUsers[id] === socket.id) {
+        delete onlineUsers[id];
 
         socket.broadcast.emit("user-status", {
-          userId,
+          userId: id,
           status: "offline"
         });
-
-        break;
       }
     }
   });
 
 });
+
+server.listen(process.env.PORT || 3000);
