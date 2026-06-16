@@ -1,72 +1,110 @@
 const express = require("express");
 const http = require("http");
+const mongoose = require("mongoose");
 const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
+app.use(express.json());
+
 app.get("/", (req, res) => {
-  res.send("SERVER RUNNING");
+  res.send("CHAT SERVER RUNNING");
 });
 
+/* =========================
+   MONGODB CONNECTION
+========================= */
+mongoose.connect("mongodb+srv://YOUR_USER:YOUR_PASS@cluster0.mongodb.net/chatapp");
+
+/* =========================
+   USER MODEL
+========================= */
+const User = mongoose.model("User", {
+  userId: String,
+  username: String,
+  password: String
+});
+
+/* =========================
+   MESSAGE MODEL
+========================= */
+const Message = mongoose.model("Message", {
+  roomId: String,
+  senderId: String,
+  message: String,
+  time: String,
+  status: String
+});
+
+/* =========================
+   ONLINE USERS
+========================= */
 let onlineUsers = {};
 
+/* =========================
+   SOCKET LOGIC
+========================= */
 io.on("connection", (socket) => {
 
-  // USER ONLINE
+  // LOGIN / ONLINE
   socket.on("user-online", (userId) => {
     onlineUsers[userId] = socket.id;
 
-    socket.broadcast.emit("user-status", {
+    io.emit("user-status", {
       userId,
       status: "online"
     });
   });
 
-  // START CHAT (WhatsApp style)
+  // START CHAT (auto room)
   socket.on("start-chat", ({ from, to }) => {
     const roomId = [from, to].sort().join("_");
+
     socket.join(roomId);
 
     socket.emit("chat-ready", { roomId });
   });
 
   // SEND MESSAGE
-  socket.on("send-message", (data) => {
+  socket.on("send-message", async (data) => {
 
-    const msg = {
-      messageId: Date.now().toString(),
+    const msg = new Message({
       roomId: data.roomId,
-      message: data.message,
       senderId: data.senderId,
+      message: data.message,
       time: new Date().toLocaleTimeString(),
       status: "sent"
-    };
+    });
+
+    await msg.save();
 
     io.to(data.roomId).emit("receive-message", msg);
 
+    // DELIVERED
     io.to(data.roomId).emit("message-status", {
-      messageId: msg.messageId,
+      messageId: msg._id,
       status: "delivered"
     });
   });
 
   // SEEN
-  socket.on("message-seen", (data) => {
-    io.to(data.roomId).emit("message-status", {
-      messageId: data.messageId,
+  socket.on("message-seen", async ({ messageId }) => {
+    await Message.findByIdAndUpdate(messageId, { status: "seen" });
+
+    io.emit("message-status", {
+      messageId,
       status: "seen"
     });
   });
 
-  // TYPING
-  socket.on("typing", (data) => {
-    socket.to(data.roomId).emit("typing", data);
-  });
+  // CHAT LIST LOAD
+  socket.on("get-chats", async (userId) => {
 
-  socket.on("stop-typing", (data) => {
-    socket.to(data.roomId).emit("stop-typing");
+    const chats = await Message.find({ senderId: userId });
+
+    socket.emit("chat-list", chats);
   });
 
   // OFFLINE
@@ -75,7 +113,7 @@ io.on("connection", (socket) => {
       if (onlineUsers[id] === socket.id) {
         delete onlineUsers[id];
 
-        socket.broadcast.emit("user-status", {
+        io.emit("user-status", {
           userId: id,
           status: "offline"
         });
@@ -85,4 +123,4 @@ io.on("connection", (socket) => {
 
 });
 
-server.listen(process.env.PORT || 3000);
+server.listen(3000, () => console.log("Server Running"));
