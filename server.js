@@ -1,126 +1,84 @@
 const express = require("express");
 const http = require("http");
-const mongoose = require("mongoose");
 const { Server } = require("socket.io");
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
 app.use(express.json());
 
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: { origin: "*" }
+});
+
+/* ======================
+   HEALTH CHECK
+====================== */
 app.get("/", (req, res) => {
-  res.send("CHAT SERVER RUNNING");
+  res.send("SERVER RUNNING OK");
 });
 
-/* =========================
-   MONGODB CONNECTION
-========================= */
-mongoose.connect("mongodb+srv://aljesif:<db_password>@cluster0.t7kihvt.mongodb.net/?appName=Cluster0");
+/* ======================
+   MEMORY STORAGE
+====================== */
+const users = new Map(); // userId -> socketId
 
-/* =========================
-   USER MODEL
-========================= */
-const User = mongoose.model("User", {
-  userId: String,
-  username: String,
-  password: String
-});
-
-/* =========================
-   MESSAGE MODEL
-========================= */
-const Message = mongoose.model("Message", {
-  roomId: String,
-  senderId: String,
-  message: String,
-  time: String,
-  status: String
-});
-
-/* =========================
-   ONLINE USERS
-========================= */
-let onlineUsers = {};
-
-/* =========================
-   SOCKET LOGIC
-========================= */
+/* ======================
+   SOCKET CONNECTION
+====================== */
 io.on("connection", (socket) => {
 
-  // LOGIN / ONLINE
-  socket.on("user-online", (userId) => {
-    onlineUsers[userId] = socket.id;
+  console.log("Connected:", socket.id);
 
-    io.emit("user-status", {
-      userId,
-      status: "online"
-    });
+  /* USER REGISTER */
+  socket.on("register", (userId) => {
+    if (!userId) return;
+    users.set(userId, socket.id);
   });
 
-  // START CHAT (auto room)
-  socket.on("start-chat", ({ from, to }) => {
-    const roomId = [from, to].sort().join("_");
-
+  /* JOIN ROOM (PRIVATE CHAT) */
+  socket.on("join", (roomId) => {
+    if (!roomId) return;
     socket.join(roomId);
-
-    socket.emit("chat-ready", { roomId });
   });
 
-  // SEND MESSAGE
-  socket.on("send-message", async (data) => {
+  /* SEND MESSAGE */
+  socket.on("message", (data = {}) => {
+    if (!data.roomId || !data.message) return;
 
-    const msg = new Message({
-      roomId: data.roomId,
-      senderId: data.senderId,
+    io.to(data.roomId).emit("message", {
+      sender: data.sender,
       message: data.message,
-      time: new Date().toLocaleTimeString(),
-      status: "sent"
-    });
-
-    await msg.save();
-
-    io.to(data.roomId).emit("receive-message", msg);
-
-    // DELIVERED
-    io.to(data.roomId).emit("message-status", {
-      messageId: msg._id,
-      status: "delivered"
+      time: new Date().toLocaleTimeString()
     });
   });
 
-  // SEEN
-  socket.on("message-seen", async ({ messageId }) => {
-    await Message.findByIdAndUpdate(messageId, { status: "seen" });
-
-    io.emit("message-status", {
-      messageId,
-      status: "seen"
-    });
+  /* TYPING */
+  socket.on("typing", (roomId) => {
+    socket.to(roomId).emit("typing");
   });
 
-  // CHAT LIST LOAD
-  socket.on("get-chats", async (userId) => {
-
-    const chats = await Message.find({ senderId: userId });
-
-    socket.emit("chat-list", chats);
+  socket.on("stopTyping", (roomId) => {
+    socket.to(roomId).emit("stopTyping");
   });
 
-  // OFFLINE
+  /* DISCONNECT */
   socket.on("disconnect", () => {
-    for (let id in onlineUsers) {
-      if (onlineUsers[id] === socket.id) {
-        delete onlineUsers[id];
-
-        io.emit("user-status", {
-          userId: id,
-          status: "offline"
-        });
+    for (let [userId, id] of users.entries()) {
+      if (id === socket.id) {
+        users.delete(userId);
+        break;
       }
     }
   });
 
 });
 
-server.listen(3000, () => console.log("Server Running"));
+/* ======================
+   START SERVER
+====================== */
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+  console.log("Server running on", PORT);
+});
