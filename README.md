@@ -1,1 +1,1 @@
-# universal-messaging-server
+UniversalChatServer
